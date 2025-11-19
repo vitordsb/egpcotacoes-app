@@ -1,17 +1,48 @@
 import { http } from "@/lib/http";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 type UseAuthOptions = {
   redirectOnUnauthenticated?: boolean;
   redirectPath?: string;
 };
 
-export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false, redirectPath = "/" } =
-    options ?? {};
+type AuthContextValue = {
+  user: any | null;
+  loading: boolean;
+  error: Error | null;
+  isAuthenticated: boolean;
+  refresh: () => Promise<any | null>;
+  logout: () => Promise<void>;
+};
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function persistUser(data: any | null) {
+  if (typeof window === "undefined") return;
+  if (data) {
+    localStorage.setItem("manus-runtime-user-info", JSON.stringify(data));
+  } else {
+    localStorage.removeItem("manus-runtime-user-info");
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  const handleUnauthorized = useCallback(() => {
+    setUser(null);
+    persistUser(null);
+  }, []);
 
   const fetchMe = useCallback(async () => {
     setLoading(true);
@@ -19,11 +50,11 @@ export function useAuth(options?: UseAuthOptions) {
     try {
       const data = await http.get("/api/auth/me");
       setUser(data);
-      localStorage.setItem("manus-runtime-user-info", JSON.stringify(data));
+      persistUser(data);
       return data;
     } catch (err) {
       if (err instanceof Error && err.message === "Please login (10001)") {
-        setUser(null);
+        handleUnauthorized();
         return null;
       }
       setError(err as Error);
@@ -31,7 +62,7 @@ export function useAuth(options?: UseAuthOptions) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [handleUnauthorized]);
 
   useEffect(() => {
     fetchMe().catch(() => {
@@ -47,38 +78,44 @@ export function useAuth(options?: UseAuthOptions) {
         return;
       throw error;
     } finally {
-      setUser(null);
-      localStorage.removeItem("manus-runtime-user-info");
+      handleUnauthorized();
     }
-  }, []);
+  }, [handleUnauthorized]);
 
-  const state = useMemo(() => {
+  const value = useMemo<AuthContextValue>(() => {
     return {
       user,
       loading,
       error,
       isAuthenticated: Boolean(user),
+      refresh: fetchMe,
+      logout,
     };
-  }, [user, loading, error]);
+  }, [user, loading, error, fetchMe, logout]);
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(options?: UseAuthOptions) {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+
+  const { redirectOnUnauthenticated = false, redirectPath = "/" } =
+    options ?? {};
+
+  const { loading, user } = context;
 
   useEffect(() => {
     if (!redirectOnUnauthenticated) return;
     if (loading) return;
-    if (state.user) return;
+    if (user) return;
     if (typeof window === "undefined") return;
     if (window.location.pathname === redirectPath) return;
 
     window.location.href = redirectPath;
-  }, [
-    redirectOnUnauthenticated,
-    redirectPath,
-    loading,
-    state.user,
-  ]);
+  }, [redirectOnUnauthenticated, redirectPath, loading, user]);
 
-  return {
-    ...state,
-    refresh: fetchMe,
-    logout,
-  };
+  return context;
 }

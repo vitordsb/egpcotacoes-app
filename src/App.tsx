@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import SupplierLogin from "./pages/SupplierLogin";
 import SupplierQuotation from "./pages/SupplierQuotation";
 import AdminDashboard from "./pages/AdminDashboard";
+import { AuthProvider } from "@/_core/hooks/useAuth";
 
 function Router() {
   return (
@@ -26,14 +27,16 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-      >
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider
+          defaultTheme="light"
+        >
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </ThemeProvider>
+      </AuthProvider>
     </ErrorBoundary>
   );
 }
