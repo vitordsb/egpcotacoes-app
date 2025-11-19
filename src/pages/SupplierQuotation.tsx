@@ -444,7 +444,7 @@ export default function SupplierQuotation() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
+        <div className="w-full px-6 py-6 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <img src={APP_LOGO} alt={APP_TITLE} className="h-12" />
             <div>
@@ -464,7 +464,7 @@ export default function SupplierQuotation() {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="w-full px-6 py-8">
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertDescription>{error}</AlertDescription>
