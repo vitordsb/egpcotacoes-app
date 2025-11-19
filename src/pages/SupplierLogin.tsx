@@ -56,6 +56,10 @@ export default function SupplierLogin() {
     if (companyParam) {
       setCompanyName(companyParam);
     }
+    const passwordParam = searchParams.get("password");
+    if (passwordParam) {
+      setPassword(passwordParam);
+    }
   }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
