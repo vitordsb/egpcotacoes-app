@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { APP_LOGO, APP_TITLE } from "@/const";
 import { cn } from "@/lib/utils";
 import { PenSquare, Trash2 } from "lucide-react";
+import { formatCnpj, sanitizeCnpj } from "@/lib/cnpj";
 
 interface QuotationCandidate {
   supplierId: number;
@@ -76,6 +77,9 @@ export default function AdminDashboard() {
   const [updatingQuantityId, setUpdatingQuantityId] = useState<number | null>(null);
   const [updatingQuotation, setUpdatingQuotation] = useState(false);
   const [deletingQuotation, setDeletingQuotation] = useState(false);
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [targetMinFilter, setTargetMinFilter] = useState("");
+  const [targetMaxFilter, setTargetMaxFilter] = useState("");
   const formatCurrencyInput = (value: number | null | undefined) =>
     value != null
       ? value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -89,6 +93,91 @@ export default function AdminDashboard() {
     }
     return sanitized;
   };
+
+  const ActiveQuotationsCard = ({ className }: { className?: string }) => (
+    <Card className={cn("flex flex-col", className)}>
+      <CardHeader>
+        <CardTitle>Cotações ativas</CardTitle>
+        <CardDescription>
+          Selecione uma cotação para ver o resumo de preços.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 max-h-[360px] overflow-y-auto pr-2">
+        {quotationsLoading ? (
+          <p className="text-gray-600">Carregando cotações...</p>
+        ) : quotations.length > 0 ? (
+          quotations.map(quotation => (
+            <Button
+              key={`quotation-${quotation.id}`}
+              variant="outline"
+              className={cn(
+                "w-full justify-between border-2 text-left",
+                selectedQuotation === quotation.id
+                  ? "border-pink-600 bg-pink-600 text-white"
+                  : "border-gray-200 bg-white text-gray-900"
+              )}
+              onClick={() => setSelectedQuotation(quotation.id)}
+            >
+              <div className="flex flex-col text-left">
+                <span className="font-semibold">{quotation.title}</span>
+                <span className="text-xs">
+                  Status: {quotation.status} • Vence:{" "}
+                  {new Date(quotation.expiresAt).toLocaleDateString("pt-BR")}
+                </span>
+              </div>
+            </Button>
+          ))
+        ) : (
+          <p className="text-gray-600">Nenhuma cotação encontrada</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+
+  const NewQuotationCard = ({ className }: { className?: string }) => (
+    <Card className={cn(className)}>
+      <CardHeader>
+        <CardTitle>Nova cotação</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-2">
+            Título
+          </label>
+          <Input
+            placeholder="Ex: Cotação Setembro 2024"
+            value={newQuotationTitle}
+            onChange={event => setNewQuotationTitle(event.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 block mb-2">
+            Descrição
+          </label>
+          <Input
+            placeholder="Descrição da cotação"
+            value={newQuotationDesc}
+            onChange={event => setNewQuotationDesc(event.target.value)}
+          />
+        </div>
+        <Button
+          onClick={handleCreateQuotation}
+          disabled={creatingQuotation}
+          className="w-full bg-pink-600 hover:bg-pink-700"
+        >
+          {creatingQuotation ? "Criando..." : "Criar cotação"}
+        </Button>
+        <label className="flex items-center gap-3 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={useTemplateItems}
+            onChange={event => setUseTemplateItems(event.target.checked)}
+          />
+          Incluir modelo base de itens automaticamente
+        </label>
+      </CardContent>
+    </Card>
+  );
 
   const getTargetKey = (item: QuotationSummaryItem) => `${item.itemId}-${item.itemName}`;
   const [editTitle, setEditTitle] = useState("");
@@ -327,15 +416,60 @@ export default function AdminDashboard() {
         ...prev,
         [key]: formatCurrencyInput(parsed),
       }));
+      setSummary(prev =>
+        prev.map(existing =>
+          existing.itemId === item.itemId
+            ? {
+                ...existing,
+                targetPrice: parsed,
+                meetsTarget:
+                  existing.lowestPrice != null ? existing.lowestPrice <= parsed : false,
+              }
+            : existing
+        )
+      );
       setSuccess("Target atualizado com sucesso.");
       setTimeout(() => setSuccess(""), 3000);
-      fetchSummary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar target");
     } finally {
       setUpdatingTargetId(null);
     }
   };
+
+  const supplierOptions = useMemo(() => {
+    const names = new Set<string>();
+    summary.forEach(item => {
+      item.candidates?.forEach(candidate => {
+        if (candidate.supplierName) {
+          names.add(candidate.supplierName);
+        }
+      });
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [summary]);
+
+  const filteredSummary = useMemo(() => {
+    const supplierTerm = supplierFilter.trim().toLowerCase();
+    const minTarget = targetMinFilter ? Number(targetMinFilter) : undefined;
+    const maxTarget = targetMaxFilter ? Number(targetMaxFilter) : undefined;
+
+    return summary.filter(item => {
+      if (supplierTerm) {
+        const hasSupplier = item.candidates?.some(candidate =>
+          candidate.supplierName.toLowerCase().includes(supplierTerm)
+        );
+        if (!hasSupplier) return false;
+      }
+      if (minTarget !== undefined && targetMinFilter !== "") {
+        if (item.targetPrice == null || item.targetPrice < minTarget) return false;
+      }
+      if (maxTarget !== undefined && targetMaxFilter !== "") {
+        if (item.targetPrice == null || item.targetPrice > maxTarget) return false;
+      }
+      return true;
+    });
+  }, [summary, supplierFilter, targetMinFilter, targetMaxFilter]);
 
   const handleQuantitySave = async (item: QuotationSummaryItem) => {
     const inputs = quantityInputs[item.itemId];
@@ -360,9 +494,19 @@ export default function AdminDashboard() {
         quantity,
         quantityToBuy,
       });
+      setSummary(prev =>
+        prev.map(existing =>
+          existing.itemId === item.itemId
+            ? {
+                ...existing,
+                quantity: quantity ?? existing.quantity,
+                quantityToBuy: quantityToBuy ?? existing.quantityToBuy,
+              }
+            : existing
+        )
+      );
       setSuccess("Quantidades atualizadas com sucesso.");
       setTimeout(() => setSuccess(""), 3000);
-      fetchSummary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao atualizar quantidades");
     } finally {
@@ -437,7 +581,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white shadow">
-        <div className="w-[80vw] mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="w-full px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <img src={APP_LOGO} alt={APP_TITLE} className="h-12" />
             <div>
@@ -460,7 +604,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      <div className="w-[80vw] mx-auto px-4 py-6">
+      <div className="w-full px-6 py-6">
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertDescription>{error}</AlertDescription>
@@ -473,84 +617,146 @@ export default function AdminDashboard() {
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Cotações Ativas</CardTitle>
-              <CardDescription>Selecione uma cotação para ver o resumo de preços</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {quotationsLoading ? (
-                <p className="text-gray-600">Carregando cotações...</p>
-              ) : quotations.length > 0 ? (
-                <div className="space-y-2">
-                  {quotations.map((quotation) => (
-                    <Button
-                      key={`quotation-${quotation.id}`}
-                      variant="outline"
-                      className={cn(
-                        "w-full justify-start text-left border-2",
-                        selectedQuotation === quotation.id
-                          ? "border-pink-600 bg-pink-600 text-white"
-                          : "border-gray-200 bg-white text-gray-900"
-                      )}
-                      onClick={() => setSelectedQuotation(quotation.id)}
-                    >
-                      <div>
-                        <div className="font-semibold">{quotation.title}</div>
-                        <div className="text-xs">
-                          Status: {quotation.status} • Vence:{" "}
-                          {new Date(quotation.expiresAt).toLocaleDateString("pt-BR")}
+        {selectedQuotation ? (
+          <div className="grid gap-4 mb-6 grid-cols-1 xl:grid-cols-12">
+            <ActiveQuotationsCard className="xl:col-span-3" />
+            <NewQuotationCard className="xl:col-span-3" />
+
+            {selectedQuotation && (
+              <>
+                <Card className="xl:col-span-3">
+                  <CardHeader>
+                  <CardTitle>Gerar acesso</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                      CNPJ do fornecedor
+                    </label>
+                    <Input
+                      placeholder="00.000.000/0000-00"
+                      value={formatCnpj(supplierForm.cnpj)}
+                      onChange={event =>
+                        setSupplierForm(prev => ({
+                          ...prev,
+                          cnpj: sanitizeCnpj(event.target.value),
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                      Nome fantasia
+                    </label>
+                    <Input
+                      placeholder="Nome da empresa"
+                      value={supplierForm.companyName}
+                      onChange={event =>
+                        setSupplierForm(prev => ({ ...prev, companyName: event.target.value }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 block mb-2">
+                      Validade (dias)
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={supplierForm.daysValid}
+                      onChange={event =>
+                        setSupplierForm(prev => ({
+                          ...prev,
+                          daysValid: parseInt(event.target.value || "1"),
+                        }))
+                      }
+                    />
+                  </div>
+                  <Button
+                    onClick={handleGenerateAccess}
+                    disabled={generatingAccess}
+                    className="w-full bg-pink-600 hover:bg-pink-700"
+                  >
+                    {generatingAccess ? "Gerando..." : "Gerar acesso"}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="xl:col-span-3">
+                <CardHeader>
+                  <CardTitle>Acessos gerados</CardTitle>
+                  <CardDescription>Senhas criadas para esta cotação.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 max-h-[360px] overflow-y-auto pr-2">
+                  {invitesLoading ? (
+                    <p className="text-gray-600">Carregando acessos...</p>
+                  ) : invites.length > 0 ? (
+                    invites.map(access => (
+                      <div
+                        key={`access-${access.id}-${access.cnpj}`}
+                        className="border rounded-lg p-3 space-y-3 bg-gray-50"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
+                          <span className="truncate">{access.companyName}</span>
+                          <span>{formatCnpj(access.cnpj)}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-medium text-gray-700">Senha:</span>
+                          <code className="px-2 py-1 rounded bg-white border text-xs">
+                            {access.password}
+                          </code>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => copyToClipboard(access.password)}
+                          >
+                            Copiar senha
+                          </Button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-medium text-gray-700">Link:</span>
+                          <span className="flex-1 min-w-[140px] text-gray-600 truncate">
+                            {access.accessUrl}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() => copyToClipboard(access.accessUrl)}
+                          >
+                            Copiar link
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between text-xs text-gray-600">
+                          <span>
+                            Expira em {new Date(access.expiresAt).toLocaleDateString("pt-BR")}
+                          </span>
+                          {access.submittedAt ? (
+                            <span className="text-green-700 font-semibold">
+                              Enviado em{" "}
+                              {new Date(access.submittedAt).toLocaleDateString("pt-BR")}
+                            </span>
+                          ) : (
+                            <span className="text-yellow-700 font-semibold">Pendente</span>
+                          )}
                         </div>
                       </div>
-                    </Button>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-gray-600">Nenhuma cotação encontrada</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Nova Cotação</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Título</label>
-                <Input
-                  placeholder="Ex: Cotação Setembro 2024"
-                  value={newQuotationTitle}
-                  onChange={(e) => setNewQuotationTitle(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700 block mb-2">Descrição</label>
-                <Input
-                  placeholder="Descrição da cotação"
-                  value={newQuotationDesc}
-                  onChange={(e) => setNewQuotationDesc(e.target.value)}
-                />
-              </div>
-              <Button
-                onClick={handleCreateQuotation}
-                disabled={creatingQuotation}
-                className="w-full bg-pink-600 hover:bg-pink-700"
-              >
-                {creatingQuotation ? "Criando..." : "Criar Cotação"}
-              </Button>
-              <label className="flex items-center gap-3 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={useTemplateItems}
-                  onChange={(e) => setUseTemplateItems(e.target.checked)}
-                />
-                Incluir modelo base de itens automaticamente
-              </label>
-            </CardContent>
-          </Card>
-        </div>
+                    ))
+                  ) : (
+                    <p className="text-gray-600">Nenhum acesso gerado ainda.</p>
+                  )}
+                </CardContent>
+              </Card>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="min-h-[320px] flex flex-col lg:flex-row items-stretch justify-center gap-6 mb-10">
+            <ActiveQuotationsCard className="w-full max-w-3xl" />
+            <NewQuotationCard className="w-full max-w-lg" />
+          </div>
+        )}
 
         {selectedQuotation && summaryQuotation && (
           <Card>
@@ -561,11 +767,67 @@ export default function AdminDashboard() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="flex flex-wrap gap-4 mb-4 items-end">
+                <div className="flex flex-col gap-2 min-w-[220px]">
+                  <label className="text-sm font-medium text-gray-700">
+                    Filtrar por fornecedor
+                  </label>
+                  <Input
+                    list="supplier-options"
+                    placeholder="Nome do fornecedor"
+                    value={supplierFilter}
+                    onChange={event => setSupplierFilter(event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-2 w-32">
+                  <label className="text-sm font-medium text-gray-700">
+                    Target mínimo
+                  </label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={targetMinFilter}
+                    onChange={event => setTargetMinFilter(event.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-2 w-32">
+                  <label className="text-sm font-medium text-gray-700">
+                    Target máximo
+                  </label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={targetMaxFilter}
+                    onChange={event => setTargetMaxFilter(event.target.value)}
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSupplierFilter("");
+                    setTargetMinFilter("");
+                    setTargetMaxFilter("");
+                  }}
+                >
+                  Limpar filtros
+                </Button>
+              </div>
+              <datalist id="supplier-options">
+                {supplierOptions.map(option => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
               <div className="overflow-x-auto">
                 {summaryLoading ? (
                   <p className="text-gray-600 px-4 py-6">Carregando resumo...</p>
+                ) : filteredSummary.length === 0 ? (
+                  <p className="text-gray-600 px-4 py-6">
+                    Nenhum item encontrado com os filtros selecionados.
+                  </p>
                 ) : (
-                <Table>
+                <Table className="text-sm [&_th]:py-2 [&_td]:py-2">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Item</TableHead>
@@ -580,7 +842,7 @@ export default function AdminDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {summary.map(item => {
+                    {filteredSummary.map(item => {
                       const currentCandidate = getCurrentCandidate(item);
                       const position = getCandidatePosition(item);
                       const showAlternativeInfo = position.index > 0 && item.lowestPrice != null;
@@ -733,160 +995,6 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
         )}
-
-        {selectedQuotation && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-            <Card>
-              <CardHeader>
-                <CardTitle>Gerar acesso para fornecedor</CardTitle>
-                <CardDescription>
-                  Crie uma senha exclusiva e compartilhe o link da cotação selecionada com o fornecedor.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-2">CNPJ do fornecedor</label>
-                  <Input
-                    placeholder="00.000.000/0000-00"
-                    value={supplierForm.cnpj}
-                    onChange={e => setSupplierForm(prev => ({ ...prev, cnpj: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-2">Nome fantasia</label>
-                  <Input
-                    placeholder="Nome da empresa"
-                    value={supplierForm.companyName}
-                    onChange={e => setSupplierForm(prev => ({ ...prev, companyName: e.target.value }))}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-2">Validade (dias)</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={supplierForm.daysValid}
-                    onChange={e =>
-                      setSupplierForm(prev => ({ ...prev, daysValid: parseInt(e.target.value || "1") }))
-                    }
-                  />
-                </div>
-                <Button
-                  onClick={handleGenerateAccess}
-                  disabled={generatingAccess}
-                  className="w-full bg-pink-600 hover:bg-pink-700"
-                >
-                  {generatingAccess ? "Gerando..." : "Gerar acesso"}
-                </Button>
-
-                {inviteResult && (
-                  <div className="p-4 border rounded-lg bg-gray-50 space-y-2">
-                    <p className="text-sm text-gray-700">
-                      Compartilhe com <strong>{inviteResult.companyName}</strong> ({inviteResult.cnpj})
-                    </p>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-gray-800">Senha:</span>
-                      <code className="px-2 py-1 rounded bg-white border text-sm">
-                        {inviteResult.password}
-                      </code>
-                      <Button variant="outline" size="sm" onClick={() => copyToClipboard(inviteResult.password)}>
-                        Copiar
-                      </Button>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-gray-800">Link:</span>
-                      <div className="flex-1 text-right text-sm truncate">{inviteResult.accessUrl}</div>
-                      <Button variant="outline" size="sm" onClick={() => copyToClipboard(inviteResult.accessUrl)}>
-                        Copiar
-                      </Button>
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      Expira em {new Date(inviteResult.expiresAt).toLocaleDateString("pt-BR")}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Acessos gerados</CardTitle>
-                <CardDescription>Senhas criadas para esta cotação.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {invitesLoading ? (
-                  <p className="text-gray-600">Carregando acessos...</p>
-                ) : invites.length > 0 ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                      <TableHead>CNPJ</TableHead>
-                      <TableHead>Empresa</TableHead>
-                      <TableHead>Senha</TableHead>
-                      <TableHead>Validade</TableHead>
-                      <TableHead>Link</TableHead>
-                          <TableHead>Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {invites.map(access => (
-                          <TableRow key={`access-${access.id}-${access.cnpj}`}>
-                            <TableCell className="font-medium">{access.cnpj}</TableCell>
-                            <TableCell>{access.companyName}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <code className="px-2 py-1 rounded bg-gray-100 border text-xs">
-                                  {access.password}
-                                </code>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => copyToClipboard(access.password)}
-                                >
-                                  Copiar
-                                </Button>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              {new Date(access.expiresAt).toLocaleDateString("pt-BR")}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <span className="truncate text-xs text-gray-600 max-w-[140px]">
-                                  {access.accessUrl}
-                                </span>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => copyToClipboard(access.accessUrl)}
-                                >
-                                  Copiar
-                            </Button>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {access.submittedAt ? (
-                            <span className="text-green-700 font-semibold">
-                              Enviado em{" "}
-                              {new Date(access.submittedAt).toLocaleDateString("pt-BR")}
-                            </span>
-                          ) : (
-                            <span className="text-yellow-700 font-semibold">Pendente</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <p className="text-gray-600">Nenhum acesso criado para esta cotação.</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-       )}
       </div>
 
       <Dialog open={!!observationModalItem} onOpenChange={(open) => !open && setObservationModalItem(null)}>

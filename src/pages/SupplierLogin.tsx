@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { http } from "@/lib/http";
 import { APP_LOGO, APP_TITLE } from "@/const";
+import { formatCnpj, sanitizeCnpj } from "@/lib/cnpj";
 
 export default function SupplierLogin() {
   const [location, setLocation] = useLocation();
@@ -45,6 +46,17 @@ export default function SupplierLogin() {
       )
       .finally(() => setPreviewLoading(false));
   }, [hasQuotation, quotationId]);
+
+  useEffect(() => {
+    const cnpjParam = searchParams.get("cnpj");
+    if (cnpjParam) {
+      setCnpj(sanitizeCnpj(cnpjParam));
+    }
+    const companyParam = searchParams.get("companyName");
+    if (companyParam) {
+      setCompanyName(companyParam);
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,8 +191,8 @@ export default function SupplierLogin() {
                   <Input
                     id="cnpj"
                     placeholder="00.000.000/0000-00"
-                    value={cnpj}
-                    onChange={(e) => setCnpj(e.target.value)}
+                    value={formatCnpj(cnpj)}
+                    onChange={e => setCnpj(sanitizeCnpj(e.target.value))}
                     disabled={loginLoading}
                   />
                 </div>

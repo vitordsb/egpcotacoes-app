@@ -54,6 +54,7 @@ export default function SupplierQuotation() {
   const [savingPriceId, setSavingPriceId] = useState<number | null>(null);
   const [savingObservationId, setSavingObservationId] = useState<number | null>(null);
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [savingAllPrices, setSavingAllPrices] = useState(false);
 
   const formatCurrencyInput = (value?: number | null, fractionDigits = 2) =>
     value != null
@@ -139,6 +140,91 @@ export default function SupplierQuotation() {
     const ipi = parseInputToNumber(entry.ipiInput) ?? 0;
     const icms = parseInputToNumber(entry.icmsInput) ?? 0;
     return basePrice + basePrice * (ipi / 100) + basePrice * (icms / 100);
+  };
+
+  type PreparedPriceResult =
+    | { status: "skip" }
+    | { status: "error"; message: string }
+    | {
+        status: "ok";
+        key: number;
+        priceInReal?: number;
+        priceInDollar?: number;
+        ipiPercentage?: number;
+        icmsPercentage?: number;
+      };
+
+  const preparePriceForSubmission = (
+    item: QuotationItem,
+    options?: { allowSkip?: boolean }
+  ): PreparedPriceResult => {
+    const { allowSkip = false } = options ?? {};
+    const key = getStateKey(item);
+    const data = priceData[key];
+    if (!data) {
+      return allowSkip
+        ? { status: "skip" }
+        : { status: "error", message: "Informe os dados do item antes de salvar." };
+    }
+
+    if (hasTooManyDecimals(data.priceInRealInput) || hasTooManyDecimals(data.priceInDollarInput)) {
+      return { status: "error", message: "Os preços devem ter no máximo três casas decimais." };
+    }
+
+    const priceInReal = parseInputToNumber(data.priceInRealInput);
+    const priceInDollar = parseInputToNumber(data.priceInDollarInput);
+
+    if (!priceInReal && !priceInDollar) {
+      return allowSkip
+        ? { status: "skip" }
+        : { status: "error", message: "Informe pelo menos um valor (Real ou Dólar)" };
+    }
+
+    const ipiPercentage = parseInputToNumber(data.ipiInput);
+    const icmsPercentage = parseInputToNumber(data.icmsInput);
+
+    return {
+      status: "ok",
+      key,
+      priceInReal,
+      priceInDollar,
+      ipiPercentage,
+      icmsPercentage,
+    };
+  };
+
+  const persistPrice = async (
+    item: QuotationItem,
+    payload: Extract<PreparedPriceResult, { status: "ok" }>,
+    options?: { silent?: boolean }
+  ) => {
+    if (!supplierId || !quotationId) return;
+    const { priceInReal, priceInDollar, ipiPercentage, icmsPercentage, key } = payload;
+    const result = await http.post<{ finalPrice: number }>("/api/supplier/price", {
+      quotationId,
+      supplierId,
+      quotationItemId: item.id,
+      priceInReal,
+      priceInDollar,
+      ipiPercentage,
+      icmsPercentage,
+    });
+    if (!options?.silent) {
+      setSuccess("Preço salvo com sucesso!");
+      setTimeout(() => setSuccess(""), 3000);
+    }
+    setPriceData(prev => ({
+      ...prev,
+      [key]: {
+        priceInRealInput:
+          priceInReal != null ? formatCurrencyInput(priceInReal) : prev[key]?.priceInRealInput ?? "",
+        priceInDollarInput:
+          priceInDollar != null ? formatCurrencyInput(priceInDollar, 4) : prev[key]?.priceInDollarInput ?? "",
+        ipiInput: ipiPercentage != null ? formatPercentageInput(ipiPercentage) : prev[key]?.ipiInput ?? "",
+        icmsInput: icmsPercentage != null ? formatPercentageInput(icmsPercentage) : prev[key]?.icmsInput ?? "",
+        finalPrice: result.finalPrice,
+      },
+    }));
   };
 
   useEffect(() => {
@@ -238,53 +324,19 @@ export default function SupplierQuotation() {
       return;
     }
 
-    const key = getStateKey(item);
-    const data = priceData[key];
-    if (!data) {
+    const prepared = preparePriceForSubmission(item);
+    if (prepared.status === "error") {
+      setError(prepared.message);
+      return;
+    }
+    if (prepared.status === "skip") {
       setError("Informe os dados do item antes de salvar.");
-      return;
-    }
-
-    if (hasTooManyDecimals(data.priceInRealInput) || hasTooManyDecimals(data.priceInDollarInput)) {
-      setError("Os preços devem ter no máximo três casas decimais.");
-      return;
-    }
-
-    const priceInReal = parseInputToNumber(data.priceInRealInput);
-    const priceInDollar = parseInputToNumber(data.priceInDollarInput);
-    const ipiPercentage = parseInputToNumber(data.ipiInput);
-    const icmsPercentage = parseInputToNumber(data.icmsInput);
-
-    if (!priceInReal && !priceInDollar) {
-      setError("Informe pelo menos um valor (Real ou Dólar)");
       return;
     }
 
     setSavingPriceId(item.id);
     try {
-      const result = await http.post<{ finalPrice: number }>("/api/supplier/price", {
-        quotationId,
-        supplierId,
-        quotationItemId: item.id,
-        priceInReal,
-        priceInDollar,
-        ipiPercentage,
-        icmsPercentage,
-      });
-      setSuccess("Preço salvo com sucesso!");
-      setTimeout(() => setSuccess(""), 3000);
-      setPriceData(prev => ({
-        ...prev,
-        [key]: {
-          priceInRealInput:
-            priceInReal != null ? formatCurrencyInput(priceInReal) : prev[key]?.priceInRealInput ?? "",
-          priceInDollarInput:
-            priceInDollar != null ? formatCurrencyInput(priceInDollar, 4) : prev[key]?.priceInDollarInput ?? "",
-          ipiInput: ipiPercentage != null ? formatPercentageInput(ipiPercentage) : prev[key]?.ipiInput ?? "",
-          icmsInput: icmsPercentage != null ? formatPercentageInput(icmsPercentage) : prev[key]?.icmsInput ?? "",
-          finalPrice: result.finalPrice,
-        },
-      }));
+      await persistPrice(item, prepared);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar preço");
     } finally {
@@ -294,6 +346,48 @@ export default function SupplierQuotation() {
 
   const hasAnySavedItem = () => {
     return Object.values(priceData).some(entry => entry?.finalPrice != null);
+  };
+
+  const hasAnyPriceInput = () => {
+    return items.some(item => {
+      const entry = priceData[getStateKey(item)];
+      return Boolean(entry?.priceInRealInput?.trim() || entry?.priceInDollarInput?.trim());
+    });
+  };
+
+  const handleSaveAllPrices = async () => {
+    if (!supplierId || !quotationId) return;
+    if (isSubmitted) {
+      setError("Cotação já enviada. Não é possível editar.");
+      return;
+    }
+    setSavingAllPrices(true);
+    let savedCount = 0;
+    try {
+      for (const item of items) {
+        const prepared = preparePriceForSubmission(item, { allowSkip: true });
+        if (prepared.status === "skip") {
+          continue;
+        }
+        if (prepared.status === "error") {
+          setError(prepared.message);
+          return;
+        }
+        await persistPrice(item, prepared, { silent: true });
+        savedCount += 1;
+      }
+      if (savedCount > 0) {
+        setSuccess(`Preço salvo para ${savedCount} item${savedCount > 1 ? "s" : ""}!`);
+        setTimeout(() => setSuccess(""), 3000);
+      } else {
+        setError("Preencha os valores de algum item antes de salvar.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar preços");
+    } finally {
+      setSavingAllPrices(false);
+      setSavingPriceId(null);
+    }
   };
 
   const handleSubmitQuotation = async () => {
@@ -398,12 +492,21 @@ export default function SupplierQuotation() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Preenchimento de Preços</CardTitle>
-            <CardDescription>
-              Preencha os preços dos itens abaixo. Você pode informar valores em Real ou Dólar.
-              IPI e ICMS são opcionais.
-            </CardDescription>
+          <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <CardTitle>Preenchimento de Preços</CardTitle>
+              <CardDescription>
+                Preencha os preços dos itens abaixo. Você pode informar valores em Real ou Dólar.
+                IPI e ICMS são opcionais.
+              </CardDescription>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={handleSaveAllPrices}
+              disabled={isSubmitted || savingAllPrices || !hasAnyPriceInput()}
+            >
+              {savingAllPrices ? "Salvando..." : "Salvar todos"}
+            </Button>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
