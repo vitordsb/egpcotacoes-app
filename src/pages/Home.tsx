@@ -7,6 +7,7 @@ import { http } from "@/lib/http";
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { APP_LOGO, APP_TITLE } from "@/const";
+import { formatCnpj, sanitizeCnpj } from "@/lib/cnpj";
 
 export default function Home() {
   const { user, logout, isAuthenticated, refresh } = useAuth();
@@ -15,6 +16,11 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [supplierCnpj, setSupplierCnpj] = useState("");
+  const [supplierCompanyName, setSupplierCompanyName] = useState("");
+  const [supplierPassword, setSupplierPassword] = useState("");
+  const [supplierError, setSupplierError] = useState<string | null>(null);
+  const [supplierSubmitting, setSupplierSubmitting] = useState(false);
 
   const handleAdminLoginSubmit = async (
     event: React.FormEvent<HTMLFormElement>
@@ -37,6 +43,37 @@ export default function Home() {
     }
   };
 
+  const handleSupplierLoginSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSupplierError(null);
+    if (!supplierCnpj || !supplierCompanyName || !supplierPassword) {
+      setSupplierError("Informe CNPJ, nome fantasia e senha.");
+      return;
+    }
+    setSupplierSubmitting(true);
+    try {
+      const payload: Record<string, unknown> = {
+        cnpj: sanitizeCnpj(supplierCnpj),
+        companyName: supplierCompanyName.trim(),
+        password: supplierPassword,
+      };
+      const data = await http.post<{ supplierId: number; companyName: string; quotationId: number }>(
+        "/api/supplier/login",
+        payload
+      );
+      sessionStorage.setItem("supplierId", data.supplierId.toString());
+      sessionStorage.setItem("companyName", data.companyName);
+      sessionStorage.setItem("quotationId", data.quotationId.toString());
+      setLocation("/supplier/quotations");
+    } catch (error) {
+      setSupplierError(
+        error instanceof Error ? error.message : "Falha ao acessar. Verifique os dados e tente novamente."
+      );
+    } finally {
+      setSupplierSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-pink-50">
       <div className="max-w-6xl mx-auto px-4 py-12">
@@ -56,16 +93,64 @@ export default function Home() {
                 Acesse o sistema para preencher suas cotações
               </CardDescription>
             </CardHeader>
-            <CardContent className="pt-6">
-              <p className="text-gray-600 mb-6">
-                Você recebeu um CNPJ e uma senha temporária válida por 14 dias.
+            <CardContent className="pt-6 space-y-4">
+              <p className="text-gray-600">
+                Você recebeu um CNPJ, nome fantasia e uma senha temporária válida por 14 dias.
                 Use-os para acessar o formulário de cotação e preencher os preços dos itens solicitados.
               </p>
+              <form className="space-y-3" onSubmit={handleSupplierLoginSubmit}>
+                <div className="space-y-2">
+                  <Label htmlFor="supplier-cnpj" className="text-white/90">
+                    CNPJ
+                  </Label>
+                  <Input
+                    id="supplier-cnpj"
+                    placeholder="00.000.000/0000-00"
+                    value={formatCnpj(supplierCnpj)}
+                    onChange={event => setSupplierCnpj(sanitizeCnpj(event.target.value))}
+                    disabled={supplierSubmitting}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="supplier-company" className="text-white/90">
+                    Nome fantasia
+                  </Label>
+                  <Input
+                    id="supplier-company"
+                    placeholder="Nome da empresa"
+                    value={supplierCompanyName}
+                    onChange={event => setSupplierCompanyName(event.target.value)}
+                    disabled={supplierSubmitting}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="supplier-password" className="text-white/90">
+                    Senha de acesso
+                  </Label>
+                  <Input
+                    id="supplier-password"
+                    type="password"
+                    placeholder="Senha temporária"
+                    value={supplierPassword}
+                    onChange={event => setSupplierPassword(event.target.value)}
+                    disabled={supplierSubmitting}
+                  />
+                </div>
+                {supplierError && <p className="text-sm text-white">{supplierError}</p>}
+                <Button
+                  type="submit"
+                  className="w-full bg-white text-pink-600 hover:bg-pink-50"
+                  disabled={supplierSubmitting}
+                >
+                  {supplierSubmitting ? "Entrando..." : "Acessar cotação"}
+                </Button>
+              </form>
               <Button
+                variant="secondary"
                 onClick={() => setLocation("/supplier/access")}
-                className="w-full bg-pink-600 hover:bg-pink-700 text-white"
+                className="w-full"
               >
-                Acessar como Fornecedor
+                Entrar com link recebido
               </Button>
             </CardContent>
           </Card>

@@ -64,11 +64,6 @@ export default function SupplierLogin() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!hasQuotation) {
-      setError("Link inválido. Solicite um novo link ao time de compras.");
-      return;
-    }
-
     setError("");
     if (!cnpj || !companyName || !password) {
       setError("Informe CNPJ, nome fantasia e senha de acesso.");
@@ -78,7 +73,7 @@ export default function SupplierLogin() {
     setLoginLoading(true);
     http
       .post("/api/supplier/login", {
-        quotationId,
+        ...(hasQuotation ? { quotationId } : {}),
         cnpj,
         companyName,
         password,
@@ -105,7 +100,7 @@ export default function SupplierLogin() {
           <img src={APP_LOGO} alt={APP_TITLE} className="h-16 mx-auto mb-4" />
           <h1 className="text-3xl font-bold text-gray-900">{APP_TITLE}</h1>
           <p className="text-gray-600">
-            Área exclusiva para fornecedores convidados. Utilize o link enviado pelo time de compras.
+            Área exclusiva para fornecedores convidados. Utilize o link enviado ou informe seus dados manualmente.
           </p>
         </div>
 
@@ -119,9 +114,9 @@ export default function SupplierLogin() {
             </CardHeader>
             <CardContent>
               {!hasQuotation && (
-                <Alert variant="destructive" className="mb-4">
+                <Alert className="mb-4 bg-blue-50 border-blue-200 text-blue-900">
                   <AlertDescription>
-                    Este link não possui o identificador da cotação. Solicite um novo link ao departamento de compras.
+                    Este link não possui o identificador da cotação. Informe seus dados na lateral para acessar manualmente.
                   </AlertDescription>
                 </Alert>
               )}
@@ -163,12 +158,16 @@ export default function SupplierLogin() {
                     </Table>
                   </div>
                 </>
-              ) : (
+              ) : hasQuotation ? (
                 <Alert variant="destructive">
                   <AlertDescription>
                     Não foi possível localizar a cotação. Verifique se o link está correto.
                   </AlertDescription>
                 </Alert>
+              ) : (
+                <p className="text-gray-600">
+                  Preencha seus dados ao lado para acessar sua cotação.
+                </p>
               )}
             </CardContent>
           </Card>

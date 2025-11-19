@@ -77,6 +77,7 @@ export default function AdminDashboard() {
   const [updatingQuantityId, setUpdatingQuantityId] = useState<number | null>(null);
   const [updatingQuotation, setUpdatingQuotation] = useState(false);
   const [deletingQuotation, setDeletingQuotation] = useState(false);
+  const [deletingAccessId, setDeletingAccessId] = useState<number | null>(null);
   const [supplierFilter, setSupplierFilter] = useState("");
   const [targetMinFilter, setTargetMinFilter] = useState("");
   const [targetMaxFilter, setTargetMaxFilter] = useState("");
@@ -94,7 +95,7 @@ export default function AdminDashboard() {
     return sanitized;
   };
 
-  const ActiveQuotationsCard = ({ className }: { className?: string }) => (
+  const renderActiveQuotationsCard = (className?: string) => (
     <Card className={cn("flex flex-col", className)}>
       <CardHeader>
         <CardTitle>Cotações ativas</CardTitle>
@@ -111,10 +112,10 @@ export default function AdminDashboard() {
               key={`quotation-${quotation.id}`}
               variant="outline"
               className={cn(
-                "w-full justify-between border-2 text-left",
+                "w-full justify-between border-2 text-left transition-colors",
                 selectedQuotation === quotation.id
-                  ? "border-pink-600 bg-pink-600 text-white"
-                  : "border-gray-200 bg-white text-gray-900"
+                  ? "border-pink-600 bg-pink-600 text-white hover:bg-pink-600 hover:border-pink-600"
+                  : "border-gray-200 bg-white text-gray-900 hover:bg-pink-50 hover:border-pink-300"
               )}
               onClick={() => setSelectedQuotation(quotation.id)}
             >
@@ -125,6 +126,18 @@ export default function AdminDashboard() {
                   {new Date(quotation.expiresAt).toLocaleDateString("pt-BR")}
                 </span>
               </div>
+              <span
+                className={cn(
+                  "ml-3 rounded-full p-1 hover:bg-black/10",
+                  selectedQuotation === quotation.id ? "text-white" : "text-gray-500"
+                )}
+                onClick={event => {
+                  event.stopPropagation();
+                  deleteQuotationById(quotation.id);
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+              </span>
             </Button>
           ))
         ) : (
@@ -134,7 +147,7 @@ export default function AdminDashboard() {
     </Card>
   );
 
-  const NewQuotationCard = ({ className }: { className?: string }) => (
+  const renderNewQuotationCard = (className?: string) => (
     <Card className={cn(className)}>
       <CardHeader>
         <CardTitle>Nova cotação</CardTitle>
@@ -557,24 +570,52 @@ export default function AdminDashboard() {
     }
   };
 
+  const deleteQuotationById = useCallback(
+    async (quotationId: number) => {
+      if (
+        !window.confirm(
+          "Tem certeza que deseja excluir esta cotação? Os dados associados serão removidos."
+        )
+      ) {
+        return;
+      }
+      setDeletingQuotation(true);
+      try {
+        await http.del(`/api/admin/quotations/${quotationId}`);
+        if (selectedQuotation === quotationId) {
+          setSelectedQuotation(null);
+          setSummary([]);
+          setSummaryQuotation(null);
+        }
+        setSuccess("Cotação excluída.");
+        setTimeout(() => setSuccess(""), 2000);
+        fetchQuotations();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao excluir cotação");
+      } finally {
+        setDeletingQuotation(false);
+      }
+    },
+    [fetchQuotations, selectedQuotation]
+  );
+
   const handleDeleteQuotation = async () => {
     if (!selectedQuotation) return;
-    if (!window.confirm("Tem certeza que deseja excluir esta cotação? Os dados associados serão removidos.")) {
-      return;
-    }
-    setDeletingQuotation(true);
+    await deleteQuotationById(selectedQuotation);
+  };
+
+  const handleDeleteAccess = async (supplierId: number) => {
+    if (!window.confirm("Deseja remover este acesso?")) return;
+    setDeletingAccessId(supplierId);
     try {
-      await http.del(`/api/admin/quotations/${selectedQuotation}`);
-      setSelectedQuotation(null);
-      setSuccess("Cotação excluída.");
+      await http.del(`/api/admin/access/${supplierId}`);
+      setInvites(prev => prev.filter(invite => invite.id !== supplierId));
+      setSuccess("Acesso removido.");
       setTimeout(() => setSuccess(""), 2000);
-      fetchQuotations();
-      setSummary([]);
-      setSummaryQuotation(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao excluir cotação");
+      setError(err instanceof Error ? err.message : "Erro ao remover acesso");
     } finally {
-      setDeletingQuotation(false);
+      setDeletingAccessId(null);
     }
   };
 
@@ -619,8 +660,8 @@ export default function AdminDashboard() {
 
         {selectedQuotation ? (
           <div className="grid gap-4 mb-6 grid-cols-1 xl:grid-cols-12">
-            <ActiveQuotationsCard className="xl:col-span-3" />
-            <NewQuotationCard className="xl:col-span-3" />
+            {renderActiveQuotationsCard("xl:col-span-3")}
+            {renderNewQuotationCard("xl:col-span-3")}
 
             {selectedQuotation && (
               <>
@@ -696,9 +737,22 @@ export default function AdminDashboard() {
                         key={`access-${access.id}-${access.cnpj}`}
                         className="border rounded-lg p-3 space-y-3 bg-gray-50"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
-                          <span className="truncate">{access.companyName}</span>
-                          <span>{formatCnpj(access.cnpj)}</span>
+                        <div className="flex items-start justify-between gap-2 text-sm font-semibold">
+                          <div className="flex flex-col">
+                            <span className="truncate">{access.companyName}</span>
+                            <span className="text-xs font-normal text-gray-500">
+                              {formatCnpj(access.cnpj)}
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500 hover:text-red-700"
+                            onClick={() => handleDeleteAccess(access.id)}
+                            disabled={deletingAccessId === access.id}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 text-xs">
                           <span className="font-medium text-gray-700">Senha:</span>
@@ -753,8 +807,8 @@ export default function AdminDashboard() {
           </div>
         ) : (
           <div className="min-h-[320px] flex flex-col lg:flex-row items-stretch justify-center gap-6 mb-10">
-            <ActiveQuotationsCard className="w-full max-w-3xl" />
-            <NewQuotationCard className="w-full max-w-lg" />
+            {renderActiveQuotationsCard("w-full max-w-3xl")}
+            {renderNewQuotationCard("w-full max-w-lg")}
           </div>
         )}
 
