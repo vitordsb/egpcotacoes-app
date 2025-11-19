@@ -135,8 +135,16 @@ export default function SupplierQuotation() {
 
   const computePreviewFinalPrice = (entry?: PriceEntry): number | undefined => {
     if (!entry) return undefined;
-    const basePrice = parseInputToNumber(entry.priceInRealInput);
-    if (basePrice == null) return entry.finalPrice ?? undefined;
+    const basePrice =
+      parseInputToNumber(entry.priceInRealInput) ??
+      (() => {
+        const priceInDollar = parseInputToNumber(entry.priceInDollarInput);
+        const exchange = parseInputToNumber(entry.priceInRealInput);
+        return priceInDollar && exchange ? priceInDollar * exchange : undefined;
+      })();
+    if (basePrice == null) {
+      return entry.finalPrice ?? undefined;
+    }
     const ipi = parseInputToNumber(entry.ipiInput) ?? 0;
     const icms = parseInputToNumber(entry.icmsInput) ?? 0;
     return basePrice + basePrice * (ipi / 100) + basePrice * (icms / 100);
